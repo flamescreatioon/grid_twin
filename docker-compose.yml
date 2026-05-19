@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: gridtwin-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gridtwin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gridtwin_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-gridtwin_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gridtwin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - gridtwin_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: gridtwin-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - gridtwin_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gridtwin-backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gridtwin}:${POSTGRES_PASSWORD:-gridtwin_dev}@postgres:5432/${POSTGRES_DB:-gridtwin_dev}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your-secret-key-change-in-production}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - gridtwin_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: gridtwin-frontend
+    command: npm run dev
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    depends_on:
+      - backend
+    networks:
+      - gridtwin_network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  gridtwin_network:
+    driver: bridge
